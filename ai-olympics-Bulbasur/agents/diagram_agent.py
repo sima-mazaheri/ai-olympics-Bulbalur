@@ -1,75 +1,68 @@
+from diagrams import Diagram, Cluster
+from diagrams.aws.compute import EC2, Lambda
+from diagrams.aws.database import RDS
+from diagrams.aws.network import VPC
 import os
-import json
-from dotenv import load_dotenv
-from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.chains import RetrievalQA
-from langchain.chat_models import ChatOpenAI
-from langchain_core.prompts import PromptTemplate
 
-# Load your API key from the .env file
-load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
+# Try to import DynamoDB from the new location (for newer library versions)
+try:
+    from diagrams.aws.database.nosql import DynamoDB
+except ImportError:
+    # If that fails, import it from the old location (for older library versions)
+    from diagrams.aws.database import DynamoDB
 
-# Create a variable to hold the path to your knowledge base
-knowledge_base_path = "../knowledge_base/doc.text"
-
-# This is the main function of your agent
-def get_solution_proposal(requirements):
-    # 1. Load the knowledge base documents
-    loader = TextLoader(knowledge_base_path)
-    documents = loader.load()
-
-    # 2. Split the documents into small, searchable chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    texts = text_splitter.split_documents(documents)
-
-    # 3. Create a way to search the knowledge base
-    embeddings = OpenAIEmbeddings(openai_api_key=api_key)
-    vectorstore = Chroma.from_documents(documents=texts, embedding=embeddings)
-
-    # 4. Define the prompt for the AI model
-    prompt_template = """You are a senior solutions architect. Your task is to design a technical solution based on the client requirements.
-    Based on the following knowledge and the client's needs, create a detailed solution proposal.
-    Format your response as a JSON object with the following keys: "proposal_text", "services", and "connections".
-    The "services" key should be a list of the key cloud services, and "connections" should be a list of lists showing how they connect.
-    
-    Knowledge:
-    {context}
-    
-    Client Requirements:
-    {question}
-    
-    JSON Proposal:
+def create_solution_diagram(solution_data, file_name="solution_diagram"):
     """
-    PROMPT = PromptTemplate(
-        template=prompt_template, input_variables=["context", "question"]
-    )
+    Generates a technical diagram based on a list of services and connections.
     
-    # 5. Connect the knowledge base to the AI model
-    llm = ChatOpenAI(temperature=0, openai_api_key=api_key)
-    qa_chain = RetrievalQA.from_chain_type(
-        llm,
-        retriever=vectorstore.as_retriever(),
-        chain_type_kwargs={"prompt": PROMPT}
-    )
+    Args:
+        solution_data (dict): A dictionary containing 'services' and 'connections'.
+    """
+    
+    # Create the output folder if it doesn't exist
+    output_dir = "diagrams_output"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
-    # 6. Get the AI's answer
-    response = qa_chain.invoke({"query": requirements})
-    
-    # Try to parse the JSON output
     try:
-        json_output = json.loads(response['result'])
-        return json_output
-    except json.JSONDecodeError:
-        # Fallback if the AI doesn't return a perfect JSON
-        return {"proposal_text": response['result'], "services": [], "connections": []}
+        with Diagram("Proposed Solution Architecture", show=False, filename=f"{output_dir}/{file_name}", direction="TB"):
+            
+            # Map of service names to their corresponding icons
+            service_map = {
+                "EC2": EC2,
+                "Lambda": Lambda,
+                "RDS": RDS,
+                "DynamoDB": DynamoDB,
+                "VPC": VPC
+            }
 
-# This is a test section to run the code
+            # Create service nodes based on the input data
+            nodes = {}
+            for service in solution_data.get('services', []):
+                # Look up the icon from our map, defaulting to a generic icon if not found
+                node_class = service_map.get(service, EC2)
+                nodes[service] = node_class(service)
+
+            # Create connections based on the input data
+            for conn in solution_data.get('connections', []):
+                source_service, target_service = conn
+                if source_service in nodes and target_service in nodes:
+                    nodes[source_service] >> nodes[target_service]
+
+    except Exception as e:
+        print(f"Error creating diagram: {e}")
+        return False
+        
+    print(f"Diagram '{file_name}.png' created successfully in the '{output_dir}' folder.")
+    return True
+
+# This is a sample input to test the agent
 if __name__ == "__main__":
-    test_requirements = "Design a low-cost, scalable web application for a small startup using AWS."
-    print("Asking the Knowledge Agent to create a proposal...")
-    proposal = get_solution_proposal(test_requirements)
-    print("\n--- Generated Proposal from Knowledge Agent ---")
-    print(json.dumps(proposal, indent=2))
+    sample_solution = {
+        "services": ["EC2", "RDS", "DynamoDB"],
+        "connections": [
+            ["EC2", "RDS"],
+            ["EC2", "DynamoDB"]
+        ]
+    }
+    create_solution_diagram(sample_solution)
